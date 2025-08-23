@@ -1,4 +1,3 @@
-export OPENAI_API_KEY=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
 export LOG_LEVEL=DEBUG
 
 poetry run openhands
