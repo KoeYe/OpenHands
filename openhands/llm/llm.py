@@ -519,6 +519,15 @@ class LLM(RetryMixin, DebugMixin):
         # but model_info will have the correct value for some reason.
         # we can go with it, but we will need to keep an eye if model_info is correct for Vertex or other providers
         # remove when litellm is updated to fix https://github.com/BerriAI/litellm/issues/5608
+        
+        # Special handling for Qwen Vision models that litellm doesn't recognize yet
+        model_name = self.config.model.lower()
+        if any(pattern in model_name for pattern in [
+            'qwen2-vl', 'qwen2.5-vl', 'qwen-vl', 'qwenvl'
+        ]):
+            logger.debug(f'Model {self.config.model} recognized as vision-capable Qwen model')
+            return True
+        
         # Check both the full model name and the name after proxy prefix for vision support
         return (
             litellm.supports_vision(self.config.model)

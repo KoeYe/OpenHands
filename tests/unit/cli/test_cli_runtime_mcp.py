@@ -70,6 +70,45 @@ class TestCLIRuntimeMCP:
     @pytest.mark.asyncio
     @patch('openhands.mcp.utils.create_mcp_clients')
     @patch('openhands.mcp.utils.call_tool_mcp')
+    async def test_call_tool_mcp_success_with_images(self, mock_call_tool, mock_create_clients):
+        """Test successful MCP tool call that returns images."""
+        # Set up MCP config with servers
+        self.runtime.config.mcp = MCPConfig(
+            sse_servers=[MCPSSEServerConfig(url='http://test.com')],
+            stdio_servers=[MCPStdioServerConfig(name='test-stdio', command='python')],
+        )
+
+        # Mock successful client creation
+        mock_client = MagicMock()
+        mock_create_clients.return_value = [mock_client]
+
+        # Mock successful tool call with image paths in response
+        expected_observation = MCPObservation(
+            content='{"result": "success", "image_paths": ["/tmp/test_image.png"]}',
+            name='test_tool',
+            arguments={'arg1': 'value1'},
+        )
+        mock_call_tool.return_value = expected_observation
+
+        action = MCPAction(name='test_tool', arguments={'arg1': 'value1'})
+
+        with patch('sys.platform', 'linux'):
+            result = await self.runtime.call_tool_mcp(action)
+
+        assert result == expected_observation
+        # Verify that image paths were parsed correctly
+        assert hasattr(result, 'image_paths')
+        mock_create_clients.assert_called_once_with(
+            self.runtime.config.mcp.sse_servers,
+            self.runtime.config.mcp.shttp_servers,
+            self.runtime.sid,
+            self.runtime.config.mcp.stdio_servers,
+        )
+        mock_call_tool.assert_called_once_with([mock_client], action)
+
+    @pytest.mark.asyncio
+    @patch('openhands.mcp.utils.create_mcp_clients')
+    @patch('openhands.mcp.utils.call_tool_mcp')
     async def test_call_tool_mcp_success(self, mock_call_tool, mock_create_clients):
         """Test successful MCP tool call."""
         # Set up MCP config with servers

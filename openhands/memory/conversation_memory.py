@@ -1,4 +1,5 @@
 from typing import Generator
+from pathlib import Path
 
 from litellm import ModelResponse
 
@@ -398,7 +399,43 @@ class ConversationMemory:
         elif isinstance(obs, MCPObservation):
             # logger.warning(f'MCPObservation: {obs}')
             text = truncate_content(obs.content, max_message_chars)
-            message = Message(role='user', content=[TextContent(text=text)])
+            
+            # Create base message content with text
+            content: list[TextContent | ImageContent] = [TextContent(text=text)]
+            
+            # Add images if available and vision is active
+            if vision_is_active and obs.has_images():
+                try:
+                    # Get base64 image data
+                    image_data = obs.get_image_base64_data()
+                    
+                    if image_data:
+                        # Create image URLs from base64 data
+                        image_urls = [img['data'] for img in image_data]
+                        content.append(ImageContent(image_urls=image_urls))
+                        
+                        # Add informational text about included images
+                        image_info = f"\n\n📸 MCP tool '{obs.name}' returned {len(image_data)} image(s):"
+                        for i, img in enumerate(image_data, 1):
+                            image_info += f"\n  {i}. {Path(img['path']).name} ({img['mime_type']})"
+                        
+                        # Update the text content to include image info
+                        content[0] = TextContent(text=text + image_info)
+                        
+                        logger.debug(f"Added {len(image_data)} images from MCP observation to LLM context")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to process images from MCP observation: {e}")
+                    # Fallback to text-only content if image processing fails
+            
+            elif obs.has_images():
+                # Vision not active, but we have images - add informational text
+                image_info = f"\n\n📸 MCP tool '{obs.name}' returned {len(obs.image_paths)} image(s) (vision not enabled):"
+                for i, path in enumerate(obs.image_paths, 1):
+                    image_info += f"\n  {i}. {Path(path).name}"
+                content[0] = TextContent(text=text + image_info)
+            
+            message = Message(role='user', content=content)
         elif isinstance(obs, IPythonRunCellObservation):
             text = obs.content
             # Clean up any remaining base64 images in text content

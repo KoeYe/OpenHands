@@ -34,6 +34,7 @@ from openhands.events.observation.commands import (
 from openhands.events.observation.delegate import AgentDelegateObservation
 from openhands.events.observation.error import ErrorObservation
 from openhands.events.observation.files import FileEditObservation, FileReadObservation
+from openhands.events.observation.mcp import MCPObservation
 from openhands.events.observation.reject import UserRejectObservation
 from openhands.events.tool import ToolCallMetadata
 from openhands.memory.conversation_memory import ConversationMemory
@@ -1579,3 +1580,124 @@ def test_process_ipython_observation_with_vision_disabled(
     message = messages[0]
     assert len(message.content) == 1
     assert isinstance(message.content[0], TextContent)
+
+
+def test_process_mcp_observation_without_images(conversation_memory):
+    """Test processing MCPObservation without images."""
+    obs = MCPObservation(
+        content='{"result": "success"}',
+        name='test_tool',
+        arguments={'arg1': 'value1'}
+    )
+
+    initial_user_message = MessageAction(content='Initial user message')
+    initial_user_message._source = EventSource.USER
+    messages = conversation_memory.process_events(
+        condensed_history=[obs],
+        initial_user_action=initial_user_message,
+        max_message_chars=None,
+        vision_is_active=False,
+    )
+
+    assert len(messages) == 3  # System + initial user + result
+    result = messages[2]  # The actual result is now at index 2
+    assert result.role == 'user'
+    assert len(result.content) == 1
+    assert isinstance(result.content[0], TextContent)
+    assert '{"result": "success"}' in result.content[0].text
+
+
+def test_process_mcp_observation_with_images_vision_disabled(conversation_memory):
+    """Test processing MCPObservation with images when vision is disabled."""
+    import tempfile
+    import json
+    
+    # Create a temporary image file
+    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
+        f.write(b'fake_png_data')
+        temp_image_path = f.name
+    
+    try:
+        content = json.dumps({
+            'result': 'success',
+            'image_paths': [temp_image_path]
+        })
+        
+        obs = MCPObservation(
+            content=content,
+            name='test_tool',
+            arguments={'arg1': 'value1'}
+        )
+
+        initial_user_message = MessageAction(content='Initial user message')
+        initial_user_message._source = EventSource.USER
+        messages = conversation_memory.process_events(
+            condensed_history=[obs],
+            initial_user_action=initial_user_message,
+            max_message_chars=None,
+            vision_is_active=False,  # Vision disabled
+        )
+
+        assert len(messages) == 3
+        result = messages[2]
+        assert result.role == 'user'
+        assert len(result.content) == 1
+        assert isinstance(result.content[0], TextContent)
+        # Should mention images but indicate vision is not enabled
+        assert 'vision not enabled' in result.content[0].text
+        assert 'test_tool' in result.content[0].text
+        
+    finally:
+        os.unlink(temp_image_path)
+
+
+def test_process_mcp_observation_with_images_vision_enabled(conversation_memory):
+    """Test processing MCPObservation with images when vision is enabled."""
+    import tempfile
+    import json
+    
+    # Create a simple PNG image (1x1 pixel)
+    png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\tpHYs\x00\x00\x0b\x13\x00\x00\x0b\x13\x01\x00\x9a\x9c\x18\x00\x00\x00\x12IDATx\x9cc\xf8\x0f\x00\x00\x00\x00\x01\x00\x01\x00\x00\x00\x00\x07\n\xcb\xc0\x00\x00\x00\x00IEND\xaeB`\x82'
+    
+    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
+        f.write(png_data)
+        temp_image_path = f.name
+    
+    try:
+        content = json.dumps({
+            'result': 'success',
+            'image_paths': [temp_image_path]
+        })
+        
+        obs = MCPObservation(
+            content=content,
+            name='test_tool',
+            arguments={'arg1': 'value1'}
+        )
+
+        initial_user_message = MessageAction(content='Initial user message')
+        initial_user_message._source = EventSource.USER
+        messages = conversation_memory.process_events(
+            condensed_history=[obs],
+            initial_user_action=initial_user_message,
+            max_message_chars=None,
+            vision_is_active=True,  # Vision enabled
+        )
+
+        assert len(messages) == 3
+        result = messages[2]
+        assert result.role == 'user'
+        assert len(result.content) == 2  # Text + Image
+        
+        # First content should be text with image info
+        assert isinstance(result.content[0], TextContent)
+        assert 'result": "success"' in result.content[0].text
+        assert 'returned 1 image(s)' in result.content[0].text
+        
+        # Second content should be image
+        assert isinstance(result.content[1], ImageContent)
+        assert len(result.content[1].image_urls) == 1
+        assert result.content[1].image_urls[0].startswith('data:image/png;base64,')
+        
+    finally:
+        os.unlink(temp_image_path)
